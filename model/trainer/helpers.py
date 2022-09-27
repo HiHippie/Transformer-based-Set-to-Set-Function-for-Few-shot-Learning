@@ -14,6 +14,7 @@ from model.models.graphnet import GCN
 from model.models.semi_feat import SemiFEAT
 from model.models.semi_protofeat import SemiProtoFEAT
 from model.models.cycfeat import CyCFEAT
+from model.models.protorec import ProtoRec
 
 class MultiGPUDataloader:
     def __init__(self, dataloader, num_device):
@@ -82,7 +83,7 @@ def get_dataloader(args):
     
     testset = Dataset('test', args)
     test_sampler = CategoriesSampler(testset.label,
-                            10000, # args.num_eval_episodes,
+                            args.num_test_episodes,
                             args.eval_way, args.eval_shot + args.eval_query)
     test_loader = DataLoader(dataset=testset,
                             batch_sampler=test_sampler,

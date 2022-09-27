@@ -142,8 +142,9 @@ def get_command_line_parser():
     parser.add_argument('--max_epoch', type=int, default=200)
     parser.add_argument('--episodes_per_epoch', type=int, default=100)
     parser.add_argument('--num_eval_episodes', type=int, default=600)
+    parser.add_argument('--num_test_episodes', type=int, default=600)
     parser.add_argument('--model_class', type=str, default='FEAT', 
-                        choices=['CyCFEAT', 'MatchNet', 'ProtoNet', 'BILSTM', 'DeepSet', 'GCN', 'FEAT', 'FEATSTAR', 'SemiFEAT', 'SemiProtoFEAT']) # None for MatchNet or ProtoNet
+                        choices=['ProtoRec', 'CyCFEAT', 'MatchNet', 'ProtoNet', 'BILSTM', 'DeepSet', 'GCN', 'FEAT', 'FEATSTAR', 'SemiFEAT', 'SemiProtoFEAT']) # None for MatchNet or ProtoNet
     parser.add_argument('--use_euclidean', action='store_true', default=False)    
     parser.add_argument('--backbone_class', type=str, default='ConvNet',
                         choices=['ConvNet', 'Res12', 'Res18', 'WRN'])
@@ -151,9 +152,9 @@ def get_command_line_parser():
                         choices=['MiniImageNet', 'TieredImageNet', 'CUB'])
     
     parser.add_argument('--way', type=int, default=5)
-    parser.add_argument('--eval_way', type=int, default=5)
+    parser.add_argument('--eval_way', type=int, default=5, help="test_way also")
     parser.add_argument('--shot', type=int, default=1)
-    parser.add_argument('--eval_shot', type=int, default=1)
+    parser.add_argument('--eval_shot', type=int, default=1, help="test_way also")
     parser.add_argument('--query', type=int, default=15)
     parser.add_argument('--eval_query', type=int, default=15)
     parser.add_argument('--balance', type=float, default=0)

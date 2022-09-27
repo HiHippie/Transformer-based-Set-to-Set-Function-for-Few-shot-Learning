@@ -72,7 +72,7 @@ class FSLTrainer(Trainer):
                 data_tm = time.time()
                 self.dt.add(data_tm - start_tm)
                 # get saved centers
-                logits = self.para_model(data, gt_label)
+                logits = self.para_model(data)
 
                 loss = F.cross_entropy(logits, label)
                 total_loss = F.cross_entropy(logits, label)
@@ -149,9 +149,13 @@ class FSLTrainer(Trainer):
         # restore model args
         args = self.args
         # evaluation mode
-        self.model.load_state_dict(torch.load(osp.join(self.args.save_path, 'max_acc.pth'))['params'])
+        max_val_acc_file = osp.join(self.args.save_path, 'max_acc.pth')
+        if osp.exists(max_val_acc_file):
+            self.model.load_state_dict(torch.load(max_val_acc_file)['params'])
+        else:
+            print("max_val_acc_checkpoint is not loaded !")
         self.model.eval()
-        record = np.zeros((10000, 2)) # loss and acc
+        record = np.zeros((args.num_test_episodes, 2)) # loss and acc
         label = torch.arange(args.eval_way, dtype=torch.int16).repeat(args.eval_query)
         label = label.type(torch.LongTensor)
         if torch.cuda.is_available():
@@ -167,7 +171,7 @@ class FSLTrainer(Trainer):
                 else:
                     data, gt_label = batch[0], batch[1]
 
-                logits = self.model(data, gt_label)
+                logits = self.model(data)
                 loss = F.cross_entropy(logits, label)
                 acc = count_acc(logits, label)
                 record[i-1, 0] = loss.item()
