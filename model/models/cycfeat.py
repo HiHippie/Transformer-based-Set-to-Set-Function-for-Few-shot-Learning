@@ -1,3 +1,4 @@
+from dbm import ndbm
 from tkinter import N
 import torch
 import torch.nn as nn
@@ -15,23 +16,11 @@ class ScaledDotProductAttention(nn.Module):
         self.dropout = nn.Dropout(attn_dropout)
         self.softmax = nn.Softmax(dim=2)
 
-    def cycle_mask(self, attn, support_label):
-        cycmask = torch.zeros_like(attn)
-        max_i = torch.max(attn, dim=1)[1].squeeze(0)
-        max_j = torch.max(attn[:, max_i, :], dim=2)[1]
-        mask = (support_label[max_j] == support_label).squeeze(0)
-        for idx in range(len(mask)):
-            if not mask[idx]:
-                cycmask[:, max_i[idx], idx] += -1e100
-        return cycmask
-
-    def forward(self, q, k, v, support_label):
+    def forward(self, q, k, v):
 
         attn = torch.bmm(q, k.transpose(1, 2))
         attn = attn / self.temperature
         
-        cycmask = self.cycle_mask(attn, support_label)
-        attn += cycmask
         log_attn = F.log_softmax(attn, 2)
         attn = self.softmax(attn)
         attn = self.dropout(attn)
@@ -61,7 +50,7 @@ class MultiHeadAttention(nn.Module):
         nn.init.xavier_normal_(self.fc.weight)
         self.dropout = nn.Dropout(dropout)
         
-    def forward(self, q, k, v, support_label):
+    def forward(self, q, k, v):
         d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
         sz_b, len_q, _ = q.size()
         sz_b, len_k, _ = k.size()
@@ -76,7 +65,7 @@ class MultiHeadAttention(nn.Module):
         k = k.permute(2, 0, 1, 3).contiguous().view(-1, len_k, d_k) # (n*b) x lk x dk
         v = v.permute(2, 0, 1, 3).contiguous().view(-1, len_v, d_v) # (n*b) x lv x dv
 
-        output, attn, log_attn = self.attention(q, k, v, support_label)
+        output, attn, log_attn = self.attention(q, k, v)
 
         output = output.view(n_head, sz_b, len_q, d_v)
         output = output.permute(1, 2, 0, 3).contiguous().view(sz_b, len_q, -1) # b x lq x (n*dv)
@@ -100,27 +89,34 @@ class CyCFEAT(FewShotModel):
         else:
             raise ValueError('')
         
-        self.slf_attn = MultiHeadAttention(1, hdim, hdim, hdim, dropout=0.5)          
+        self.attn = MultiHeadAttention(1, hdim, hdim, hdim, dropout=0.5)  
+        self.mlp = nn.Sequential(
+            nn.Linear(hdim, 4*hdim),
+            nn.GELU(),
+            nn.Linear(4*hdim, hdim),
+            nn.Dropout(),
+        )    
         
-    def _forward(self, instance_embs, instance_labels, support_idx, query_idx):
+    def _forward(self, instance_embs, support_idx, query_idx):
         emb_dim = instance_embs.size(-1)
 
         # organize support/query data
         support = instance_embs[support_idx.contiguous().view(-1)].unsqueeze(0)
         query   = instance_embs[query_idx.contiguous().view(-1)].unsqueeze(0)
-        support_label = instance_labels[:support.shape[1]]
-
     
         # query: (num_batch, num_query, num_proto, num_emb)
         # proto: (num_batch, num_proto, num_emb)
 
         # support:  [1, self.args.shot, self.args.way, emb_dim]
-        # import pdb
-        # pdb.set_trace()
-        query = self.slf_attn(query, support, support, support_label)  
+        atten_query = self.attn(query, support, support) 
+
+        # transformer block
+        query = F.layer_norm(atten_query, normalized_shape=(query.shape[1], emb_dim)) + query
+        query = F.layer_norm(self.mlp(query), normalized_shape=(query.shape[1], emb_dim)) + query
+
         support = support.contiguous().view(*(support_idx.shape + (-1,)))
         query = query.contiguous().view(*(query_idx.shape + (-1,)))
-
+ 
         # get mean of the support
         proto = support.mean(dim=1) # Ntask x NK x d
         num_batch = proto.shape[0]
@@ -135,23 +131,10 @@ class CyCFEAT(FewShotModel):
             logits = - torch.sum((proto - query) ** 2, 2) / self.args.temperature
         else:
             proto = F.normalize(proto, dim=-1) # normalize for cosine distance
+            query = F.normalize(query, dim=-1)
             query = query.view(num_batch, -1, emb_dim) # (Nbatch,  Nq*Nw, d)
 
             logits = torch.bmm(query, proto.permute([0,2,1])) / self.args.temperature
             logits = logits.view(-1, num_proto)
 
         return logits   
-
-    def forward(self, x, y, get_feature=False):
-        if get_feature:
-            # get feature with the provided embeddings
-            return self.encoder(x)
-        else:
-            # feature extraction
-            x = x.squeeze(0)
-            instance_embs = self.encoder(x)
-            num_inst = instance_embs.shape[0]
-            # split support query set for few-shot data
-            support_idx, query_idx = self.split_instances(x)
-            logits = self._forward(instance_embs, y, support_idx, query_idx)
-            return logits

@@ -128,7 +128,7 @@ class FSLTrainer(Trainer):
                     data, gt_label = [_.cuda() for _ in batch]
                 else:
                     data, gt_label = batch[0], batch[1]
-                logits = self.model(data, gt_label)
+                logits = self.model(data)
                 loss = F.cross_entropy(logits, label)
                 acc = count_acc(logits, label)
                 record[i-1, 0] = loss.item()
