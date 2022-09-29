@@ -1,11 +1,30 @@
 from dbm import ndbm
 from tkinter import N
+from turtle import forward, pd
 import torch
 import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 
 from model.models import FewShotModel
+
+
+class MILAttention(nn.Module):
+
+    def __init__(self, hdim):
+        super().__init__()
+
+        self.V = nn.Linear(hdim, hdim, bias=False)
+        self.w = nn.Linear(hdim, 1, bias=False)
+
+    def forward(self, x):
+        x = x.permute(0, 2, 1)
+        x = torch.tanh(self.V(x))
+        attn_score = torch.softmax(self.w(x), dim=-1).permute(0, 2, 1)
+        x = torch.bmm(attn_score, x).squeeze(1)
+
+        return x
+        
 
 class ScaledDotProductAttention(nn.Module):
     ''' Scaled Dot-Product Attention '''
@@ -17,7 +36,6 @@ class ScaledDotProductAttention(nn.Module):
         self.softmax = nn.Softmax(dim=2)
 
     def forward(self, q, k, v):
-
         attn = torch.bmm(q, k.transpose(1, 2))
         attn = attn / self.temperature
         
@@ -55,7 +73,6 @@ class MultiHeadAttention(nn.Module):
         sz_b, len_q, _ = q.size()
         sz_b, len_k, _ = k.size()
         sz_b, len_v, _ = v.size()
-
         residual = q
         q = self.w_qs(q).view(sz_b, len_q, n_head, d_k)
         k = self.w_ks(k).view(sz_b, len_k, n_head, d_k)
@@ -89,7 +106,8 @@ class CyCFEAT(FewShotModel):
         else:
             raise ValueError('')
         
-        self.attn = MultiHeadAttention(1, hdim, hdim, hdim, dropout=0.5)  
+        self.ins_attn = MultiHeadAttention(1, hdim, hdim, hdim, dropout=0.5)  
+        self.feat_attn = MILAttention(hdim)  
         self.mlp = nn.Sequential(
             nn.Linear(hdim, 4*hdim),
             nn.GELU(),
@@ -97,8 +115,13 @@ class CyCFEAT(FewShotModel):
             nn.Dropout(),
         )    
         
-    def _forward(self, instance_embs, support_idx, query_idx):
+    def _forward(self, instance_embs, img_feat, support_idx, query_idx):
         emb_dim = instance_embs.size(-1)
+
+        img_feat = img_feat.permute(0, 2, 3, 1).contiguous().view(img_feat.shape[0], img_feat.shape[1], -1)
+        
+        # feat attn
+        instance_embs = self.feat_attn(img_feat)
 
         # organize support/query data
         support = instance_embs[support_idx.contiguous().view(-1)].unsqueeze(0)
@@ -108,11 +131,11 @@ class CyCFEAT(FewShotModel):
         # proto: (num_batch, num_proto, num_emb)
 
         # support:  [1, self.args.shot, self.args.way, emb_dim]
-        atten_query = self.attn(query, support, support) 
+        # atten_query = self.ins_attn(query, support, support) 
 
         # transformer block
-        query = F.layer_norm(atten_query, normalized_shape=(query.shape[1], emb_dim)) + query
-        query = F.layer_norm(self.mlp(query), normalized_shape=(query.shape[1], emb_dim)) + query
+        # query = F.layer_norm(atten_query, normalized_shape=(query.shape[1], emb_dim)) + query
+        # query = F.layer_norm(self.mlp(query), normalized_shape=(query.shape[1], emb_dim)) + query
 
         support = support.contiguous().view(*(support_idx.shape + (-1,)))
         query = query.contiguous().view(*(query_idx.shape + (-1,)))
@@ -138,3 +161,17 @@ class CyCFEAT(FewShotModel):
             logits = logits.view(-1, num_proto)
 
         return logits   
+
+    def forward(self, x, get_feature=False):
+        if get_feature:
+            # get feature with the provided embeddings
+            return self.encoder(x)
+        else:
+            # feature extraction
+            x = x.squeeze(0)
+            instance_embs, img_feat = self.encoder(x, return_feat=True)
+            num_inst = instance_embs.shape[0]
+            # split support query set for few-shot data
+            support_idx, query_idx = self.split_instances(x)
+            logits = self._forward(instance_embs, img_feat, support_idx, query_idx)
+            return logits

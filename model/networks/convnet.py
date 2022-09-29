@@ -21,9 +21,12 @@ class ConvNet(nn.Module):
             conv_block(hid_dim, z_dim),
         )
 
-    def forward(self, x):
+    def forward(self, x, return_feat=False):
         x = self.encoder(x)
-        x = nn.MaxPool2d(5)(x)
-        x = x.view(x.size(0), -1)
-        return x
+        h = nn.MaxPool2d(5)(x)
+        h = h.view(h.size(0), -1)
+        if return_feat:
+            return h, x
+        else:
+            return h
 
